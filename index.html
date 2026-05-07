@@ -68,6 +68,17 @@
       font-weight:600; background:var(--gray); }
     table.report td.num { text-align:right; font-variant-numeric:tabular-nums; }
     table.report tr:last-child td { border-bottom:none; }
+
+    /* Revenue vs cost — multi-month layout with clear month-group dividers */
+    table.report-rc th.month-hdr { background: var(--green-lt); color: var(--green);
+      text-align:center; font-size:12px; font-weight:700; border-bottom:2px solid var(--green);
+      padding:6px 10px; }
+    table.report-rc .sub-rev { border-left:2px solid var(--green); }
+    table.report-rc th.sub-hdr { font-size:10px; padding:4px 10px; background:var(--white); }
+    table.report-rc .proj-col, table.report-rc tbody td:first-child { border-right:2px solid var(--green); }
+    table.report-rc tbody tr:nth-child(even) td { background: rgba(0,0,0,0.025); }
+    table.report-rc tbody tr:hover td { background: rgba(29,74,42,0.08); }
+    table.report-rc td.zero { color:#bbb; }
     .rag-dot { display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:middle; margin-right:6px; }
     .rag-red { background:var(--danger); }
     .rag-amber { background:var(--amber); }
@@ -538,18 +549,23 @@ function renderRevCost(projects, apps, time3ByProj, invs, months3){
 
   if(rows.length===0){ el.innerHTML='<div class="empty">No revenue or cost activity in last 3 months</div>'; return; }
 
-  let html='<table class="report"><thead><tr><th>Project</th>';
-  months3.forEach(m=>{ html+=`<th class="num" colspan="3">${m.label}</th>`; });
-  html+='</tr><tr><th></th>';
-  months3.forEach(()=>{ html+='<th class="num">Rev</th><th class="num">Cost</th><th class="num">Net</th>'; });
+  let html='<table class="report report-rc"><thead><tr><th rowspan="2" class="proj-col">Project</th>';
+  months3.forEach(m=>{ html+=`<th class="num month-hdr" colspan="3">${m.label}</th>`; });
+  html+='</tr><tr>';
+  months3.forEach(()=>{ html+='<th class="num sub-hdr sub-rev">Rev</th><th class="num sub-hdr sub-cost">Cost</th><th class="num sub-hdr sub-net">Net</th>'; });
   html+='</tr></thead><tbody>';
   rows.forEach(r=>{
     html+=`<tr><td><strong>${esc(r.name)}</strong></td>`;
     r.cells.forEach(c=>{
-      const netCol=c.net>=0?'var(--green)':'var(--danger)';
-      html+=`<td class="num">${fmt(c.revenue)}</td>`;
-      html+=`<td class="num" style="color:var(--muted)">${fmt(c.cost)}</td>`;
-      html+=`<td class="num" style="color:${netCol};font-weight:600">${fmt(c.net)}</td>`;
+      const netCol=c.net>0?'var(--green)':c.net<0?'var(--danger)':'var(--muted)';
+      const revCls='num sub-rev'+(c.revenue===0?' zero':'');
+      const costCls='num sub-cost'+(c.cost===0?' zero':'');
+      const netCls='num sub-net'+(c.net===0?' zero':'');
+      const costStyle=c.cost===0?'':'color:var(--muted)';
+      const netStyle=c.net===0?'':`color:${netCol};font-weight:600`;
+      html+=`<td class="${revCls}">${fmt(c.revenue)}</td>`;
+      html+=`<td class="${costCls}" style="${costStyle}">${fmt(c.cost)}</td>`;
+      html+=`<td class="${netCls}" style="${netStyle}">${fmt(c.net)}</td>`;
     });
     html+='</tr>';
   });
