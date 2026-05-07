@@ -52,6 +52,11 @@
       padding:14px 16px; margin-bottom:14px; }
     .card-title { font-weight:600; font-size:14px; margin-bottom:10px; color:var(--green);
       text-transform:uppercase; letter-spacing:0.5px; }
+    /* Wide tables that won't fit on phone screens — horizontal scroll INSIDE the card,
+       so the right edge stays inside the rounded card border instead of overflowing the page. */
+    .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch;
+      margin: 0 -16px; padding: 0 16px; }
+    .scroll-x table.report { min-width: 600px; }
 
     .kpi-strip { display:grid; grid-template-columns: repeat(5, 1fr); gap:10px; margin-bottom:16px; }
     .kpi { background:var(--white); border:1px solid var(--border); border-radius:var(--radius);
@@ -578,7 +583,7 @@ function renderRevCost(projects, apps, time3ByProj, invs, months3){
     html+='</tr>';
   });
   html+='</tbody></table>';
-  el.innerHTML=html;
+  el.innerHTML=`<div class="scroll-x">${html}</div>`;
 }
 
 function renderTopSuppliers(invs, fromIso){
@@ -721,7 +726,7 @@ function renderMarginRag(rows){
     </tr>`;
   });
   html+='</tbody></table>';
-  el.innerHTML=html;
+  el.innerHTML=`<div class="scroll-x">${html}</div>`;
 }
 
 function renderMaintHealth(clients, evRows, queue, w12From, w12To, last12moFrom){
