@@ -367,8 +367,8 @@ async function loadDashboard(){
     sb.from('variations').select('project_name, value, status'),
     sb.from('time_entries').select('project_name, calculated_hours, entry_type, entry_date, employee_id, employees(rate, rate_type, sick_pay, absent_pay, employment_type, employer_oncost_rate)').gte('entry_date', months3From),
     sb.from('time_entries').select('project_name, calculated_hours, entry_type, entry_date, employee_id, employees(rate, rate_type, sick_pay, absent_pay, employment_type, employer_oncost_rate)').gte('entry_date', w12From).lte('entry_date', w12To),
-    sb.from('invoices').select('project_name, vendor_name, invoice_date, net_amount, cost_code, status'),
-    sb.from('po_log').select('project_name, net_value, cost_code').neq('status','Cancelled'),
+    sb.from('invoices').select('project_name, vendor_name, invoice_date, net_amount, cost_code, status, po_number'),
+    sb.from('po_log').select('project_name, po_number, net_value, cost_code, created_at, status').neq('status','Cancelled'),
     sb.from('cvr_budget').select('project_name, cost_code, forecast_amount'),
     sb.from('earned_values').select('project_name, client_id, amount, entry_date'),
     sb.from('mgmt_actions').select('*').order('priority_score',{ascending:false}).order('created_at',{ascending:false}),
@@ -388,8 +388,8 @@ async function loadDashboard(){
   const time3=time3Res.data||[];
   const time12w=time12wRes.data||[];
   const invs=invsRes.data||[];
-  // Reports treats every received invoice as cost regardless of approval status —
-  // a more inclusive view than CVR's Approved/Exported-only convention.
+  // Every received invoice counts as cost regardless of approval status.
+  // Same philosophy as CVR (James 2026-05-07).
   const pos=posRes.data||[];
   const budgetRows=budgetRes.data||[];
   const evRows=evRes.data||[];
@@ -430,15 +430,19 @@ async function loadDashboard(){
   const time3ByProj={};
   time3.forEach(t=>{ if(!allTimeByProj[t.project_name]) allTimeByProj[t.project_name]=[]; allTimeByProj[t.project_name].push(t);
     if(!time3ByProj[t.project_name]) time3ByProj[t.project_name]=[]; time3ByProj[t.project_name].push(t); });
-  const invByProjCode={}; const poByProjCode={};
-  invs.forEach(i=>{const k=i.project_name+'|'+(i.cost_code||'OTHER');invByProjCode[k]=(invByProjCode[k]||0)+parseFloat(i.net_amount);});
-  pos.forEach(p=>{const k=p.project_name+'|'+(p.cost_code||'OTHER');poByProjCode[k]=(poByProjCode[k]||0)+parseFloat(p.net_value||0);});
+  // Committed cost (James 2026-05-07): SUM(POs not cancelled) + SUM(orphan invoices),
+  // where an orphan is an invoice with no matching PO. No status filter on invoices.
+  // committed >= actual always — workflow back-fills variations into new POs.
+  const allPoNumbers=new Set(pos.map(p=>p.po_number).filter(Boolean));
+  const isOrphan=(i)=>!i.po_number||!allPoNumbers.has(i.po_number);
+  const committedByProjCode={};
+  pos.forEach(p=>{const k=p.project_name+'|'+(p.cost_code||'OTHER');committedByProjCode[k]=(committedByProjCode[k]||0)+parseFloat(p.net_value||0);});
+  invs.forEach(i=>{ if(isOrphan(i)){ const k=i.project_name+'|'+(i.cost_code||'OTHER');committedByProjCode[k]=(committedByProjCode[k]||0)+parseFloat(i.net_amount||0); }});
   const budgetByProj={};
   budgetRows.forEach(b=>{ if(!budgetByProj[b.project_name]) budgetByProj[b.project_name]=[]; budgetByProj[b.project_name].push(b); });
 
   const contractRows=[];
   let workInHandTotal=0, marginNumerator=0, marginDenominator=0;
-  let cashCertified=0, cashPaid=0, cashRetention=0;
   let thisMonthRevenue=0;
 
   projs.filter(p=>p.project_type==='Contract').forEach(p=>{
@@ -449,23 +453,21 @@ async function loadDashboard(){
     const certifiedToDate=certifiedToDateByProj[p.name]||0;
     const remaining=revisedVal-certifiedToDate;
 
-    // Committed cost = max(PO, invoiced) per cost code + labour all-time
+    // Committed cost = sum of POs (not cancelled) + orphan invoices, no status filter
     let committed=0;
-    codes.forEach(cc=>{const k=p.name+'|'+cc;committed+=Math.max(poByProjCode[k]||0, invByProjCode[k]||0);});
-    // Labour all-time isn't fetched (we only fetched 3mo for cost cards). We use cvr.labour_hours×labour_rate
-    // as a forecast budget; for committed we'd ideally have all-time labour. Margin RAG uses the budget logic.
+    codes.forEach(cc=>{committed+=committedByProjCode[p.name+'|'+cc]||0;});
+    // Cost to go: budget − committed per code; labour budget treated as unspent
+    // (we don't fetch all-time time_entries — labour from prior months not subtracted)
     const projBudget=budgetByProj[p.name]||[];
     let totalCtg=0;
     projBudget.forEach(b=>{
       const cc=b.cost_code;
       const budgetAmt=parseFloat(b.forecast_amount)||0;
-      const poVal=poByProjCode[p.name+'|'+(cc||'OTHER')]||0;
-      const invVal=invByProjCode[p.name+'|'+(cc||'OTHER')]||0;
-      totalCtg+=budgetAmt-Math.max(poVal,invVal);
+      const committedThisCode=committedByProjCode[p.name+'|'+(cc||'OTHER')]||0;
+      totalCtg+=budgetAmt-committedThisCode;
     });
     const labourBudget=parseFloat(cvr.labour_hours||0)*parseFloat(cvr.labour_rate||0);
-    // Approximation: use labour budget less zero (we don't have all-time labour cost here)
-    totalCtg+=labourBudget; // budget remaining (no labour subtracted — accept slight optimism)
+    totalCtg+=labourBudget;
     const projectedFinal=committed+totalCtg;
     const margin=revisedVal-projectedFinal;
     const marginPct=revisedVal>0?(margin/revisedVal)*100:0;
@@ -474,33 +476,37 @@ async function loadDashboard(){
     workInHandTotal+=remaining;
     marginNumerator+=margin;
     marginDenominator+=revisedVal;
-    cashCertified+=certifiedToDate;
-    cashPaid+=paidToDateByProj[p.name]||0;
-    cashRetention+=retentionByProj[p.name]||0;
     thisMonthRevenue+=thisMonthCertByProj[p.name]||0;
   });
 
-  // Maintenance 12wk net
+  // Maintenance 12wk net = earned − (labour + committed in 12wk window)
+  // Committed in window = POs (not cancelled) created in window + orphan invoices in window
   const evIn12w=evRows.filter(e=>e.entry_date>=w12From&&e.entry_date<=w12To);
   const maintEarned12w=evIn12w.filter(e=>(e.project_name||'').startsWith('Maintenance - ')).reduce((s,e)=>s+parseFloat(e.amount||0),0);
   const time12wMaint=time12w.filter(t=>(t.project_name||'').startsWith('Maintenance - '));
   const maintLabour12w=calcLabourCost(time12wMaint);
-  const invIn12wMaint=invs.filter(i=>i.invoice_date&&i.invoice_date>=w12From&&i.invoice_date<=w12To&&(i.project_name||'').startsWith('Maintenance - ')).reduce((s,i)=>s+parseFloat(i.net_amount||0),0);
-  const maintNet12w=maintEarned12w-(maintLabour12w+invIn12wMaint);
+  const posIn12wMaint=pos.filter(p=>(p.project_name||'').startsWith('Maintenance - ')&&p.created_at&&p.created_at.slice(0,10)>=w12From&&p.created_at.slice(0,10)<=w12To).reduce((s,p)=>s+parseFloat(p.net_value||0),0);
+  const orphanInvsIn12wMaint=invs.filter(i=>(i.project_name||'').startsWith('Maintenance - ')&&isOrphan(i)&&i.invoice_date&&i.invoice_date>=w12From&&i.invoice_date<=w12To).reduce((s,i)=>s+parseFloat(i.net_amount||0),0);
+  const maintCommitted12w=posIn12wMaint+orphanInvsIn12wMaint;
+  const maintNet12w=maintEarned12w-(maintLabour12w+maintCommitted12w);
 
   // Add this-month maintenance revenue to thisMonthRevenue too
   const thisMonthEv=evRows.filter(e=>e.entry_date&&e.entry_date.slice(0,7)===thisYearMonth);
   thisMonthRevenue+=thisMonthEv.reduce((s,e)=>s+parseFloat(e.amount||0),0);
 
-  const cashPosition=cashCertified-cashPaid-cashRetention;
+  // Cash position (James 2026-05-07): cumulative certified − cumulative actual cost (all projects, all invoices)
+  const totalCertifiedCompany=Object.values(certifiedToDateByProj).reduce((s,v)=>s+v,0)
+                            + evRows.reduce((s,e)=>s+parseFloat(e.amount||0),0);
+  const totalActualCompany=invs.reduce((s,i)=>s+parseFloat(i.net_amount||0),0);
+  const cashPosition=totalCertifiedCompany-totalActualCompany;
   const avgMarginPct=marginDenominator>0?(marginNumerator/marginDenominator)*100:0;
 
   const kpiHtml=`
     <div class="kpi"><div class="kpi-n">${fmt(workInHandTotal)}</div><div class="kpi-l">Work in hand</div><div class="kpi-sub">${contractRows.length} active contracts</div></div>
-    <div class="kpi"><div class="kpi-n">${fmt(cashPosition)}</div><div class="kpi-l">Cash position</div><div class="kpi-sub">cert &minus; paid &minus; retention</div></div>
+    <div class="kpi ${cashPosition<0?'danger':''}"><div class="kpi-n">${fmt(cashPosition)}</div><div class="kpi-l">Cash position</div><div class="kpi-sub">certified &minus; actual cost</div></div>
     <div class="kpi"><div class="kpi-n">${fmt(thisMonthRevenue)}</div><div class="kpi-l">Revenue this month</div><div class="kpi-sub">contracts + maintenance</div></div>
     <div class="kpi ${avgMarginPct<5?'danger':avgMarginPct<10?'amber':''}"><div class="kpi-n">${fmtPct(avgMarginPct)}</div><div class="kpi-l">Forecast margin</div><div class="kpi-sub">weighted by contract value</div></div>
-    <div class="kpi ${maintNet12w<0?'danger':''}"><div class="kpi-n">${fmt(maintNet12w)}</div><div class="kpi-l">Maintenance 12wk net</div><div class="kpi-sub">earned &minus; spent</div></div>
+    <div class="kpi ${maintNet12w<0?'danger':''}"><div class="kpi-n">${fmt(maintNet12w)}</div><div class="kpi-l">Maintenance 12wk net</div><div class="kpi-sub">earned &minus; (labour + committed)</div></div>
   `;
   document.getElementById('kpi-strip').innerHTML=kpiHtml;
 
