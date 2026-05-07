@@ -388,9 +388,8 @@ async function loadDashboard(){
   const time3=time3Res.data||[];
   const time12w=time12wRes.data||[];
   const invs=invsRes.data||[];
-  // Cost calculations use realised cost only (Approved or Exported), matching the
-  // CVR convention. Top suppliers uses the unfiltered list per James's spec.
-  const invsCost=invs.filter(i=>i.status==='Approved'||i.status==='Exported');
+  // Reports treats every received invoice as cost regardless of approval status —
+  // a more inclusive view than CVR's Approved/Exported-only convention.
   const pos=posRes.data||[];
   const budgetRows=budgetRes.data||[];
   const evRows=evRes.data||[];
@@ -432,7 +431,7 @@ async function loadDashboard(){
   time3.forEach(t=>{ if(!allTimeByProj[t.project_name]) allTimeByProj[t.project_name]=[]; allTimeByProj[t.project_name].push(t);
     if(!time3ByProj[t.project_name]) time3ByProj[t.project_name]=[]; time3ByProj[t.project_name].push(t); });
   const invByProjCode={}; const poByProjCode={};
-  invsCost.forEach(i=>{const k=i.project_name+'|'+(i.cost_code||'OTHER');invByProjCode[k]=(invByProjCode[k]||0)+parseFloat(i.net_amount);});
+  invs.forEach(i=>{const k=i.project_name+'|'+(i.cost_code||'OTHER');invByProjCode[k]=(invByProjCode[k]||0)+parseFloat(i.net_amount);});
   pos.forEach(p=>{const k=p.project_name+'|'+(p.cost_code||'OTHER');poByProjCode[k]=(poByProjCode[k]||0)+parseFloat(p.net_value||0);});
   const budgetByProj={};
   budgetRows.forEach(b=>{ if(!budgetByProj[b.project_name]) budgetByProj[b.project_name]=[]; budgetByProj[b.project_name].push(b); });
@@ -486,7 +485,7 @@ async function loadDashboard(){
   const maintEarned12w=evIn12w.filter(e=>(e.project_name||'').startsWith('Maintenance - ')).reduce((s,e)=>s+parseFloat(e.amount||0),0);
   const time12wMaint=time12w.filter(t=>(t.project_name||'').startsWith('Maintenance - '));
   const maintLabour12w=calcLabourCost(time12wMaint);
-  const invIn12wMaint=invsCost.filter(i=>i.invoice_date&&i.invoice_date>=w12From&&i.invoice_date<=w12To&&(i.project_name||'').startsWith('Maintenance - ')).reduce((s,i)=>s+parseFloat(i.net_amount||0),0);
+  const invIn12wMaint=invs.filter(i=>i.invoice_date&&i.invoice_date>=w12From&&i.invoice_date<=w12To&&(i.project_name||'').startsWith('Maintenance - ')).reduce((s,i)=>s+parseFloat(i.net_amount||0),0);
   const maintNet12w=maintEarned12w-(maintLabour12w+invIn12wMaint);
 
   // Add this-month maintenance revenue to thisMonthRevenue too
@@ -506,7 +505,7 @@ async function loadDashboard(){
   document.getElementById('kpi-strip').innerHTML=kpiHtml;
 
   // ── Project rev vs cost (last 3 months) ───────────────────
-  renderRevCost(projs.filter(p=>p.project_type==='Contract'), apps, time3ByProj, invsCost, months3);
+  renderRevCost(projs.filter(p=>p.project_type==='Contract'), apps, time3ByProj, invs, months3);
 
   // ── Top 5 suppliers ───────────────────────────────────────
   renderTopSuppliers(invs, last90Iso);
