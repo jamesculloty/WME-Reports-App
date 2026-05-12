@@ -28,6 +28,7 @@
       --danger-lt: #FDECEC;
       --amber:     #C99205;
       --amber-lt:  #FDF6E3;
+      --purple:    #7C3AED;
       --radius:    10px;
       --radius-sm: 6px;
     }
@@ -92,6 +93,7 @@
     .rag-red { background:var(--danger); }
     .rag-amber { background:var(--amber); }
     .rag-green { background:var(--green); }
+    .rag-purple { background:var(--purple); }
 
     .action-add { display:flex; gap:8px; margin-bottom:12px; }
     .action-add input[type="text"] { flex:1; padding:8px 10px; border:1px solid var(--border);
@@ -543,15 +545,16 @@ async function loadDashboard(){
   renderActions(actions);
 
   // ── Timesheet compliance ──────────────────────────────────
-  // Build per-employee set of entry-dates for last week (any entry_type counts as "logged")
+  // Build per-employee map of date -> Set(entry_type) for last week
   const weekDaySet=new Set(weekDays);
-  const entryDatesByEmp={};
+  const entryTypesByEmp={};
   time3.forEach(e=>{
     if(!weekDaySet.has(e.entry_date))return;
-    if(!entryDatesByEmp[e.employee_id])entryDatesByEmp[e.employee_id]=new Set();
-    entryDatesByEmp[e.employee_id].add(e.entry_date);
+    if(!entryTypesByEmp[e.employee_id])entryTypesByEmp[e.employee_id]={};
+    if(!entryTypesByEmp[e.employee_id][e.entry_date])entryTypesByEmp[e.employee_id][e.entry_date]=new Set();
+    entryTypesByEmp[e.employee_id][e.entry_date].add(e.entry_type||'work');
   });
-  renderTsCompliance(emps, lastWeekTs, lastMon, lastSun, weekDays, entryDatesByEmp);
+  renderTsCompliance(emps, lastWeekTs, lastMon, lastSun, weekDays, entryTypesByEmp);
 
   // ── Margin RAG ────────────────────────────────────────────
   renderMarginRag(contractRows);
@@ -716,7 +719,7 @@ function renderActions(list){
   document.getElementById('action-list').innerHTML=html;
 }
 
-function renderTsCompliance(emps, lastWeekTs, lastMon, lastSun, weekDays, entryDatesByEmp){
+function renderTsCompliance(emps, lastWeekTs, lastMon, lastSun, weekDays, entryTypesByEmp){
   const el=document.getElementById('ts-compliance');
   const submitted=new Set(lastWeekTs.filter(t=>t.status==='Submitted'||t.status==='Approved').map(t=>t.employee_id));
   const required=emps.filter(e=>e.timesheet_required!==false);
@@ -728,6 +731,17 @@ function renderTsCompliance(emps, lastWeekTs, lastMon, lastSun, weekDays, entryD
     el.innerHTML=`<div class="compliance-empty">All ${required.length} required staff submitted timesheets for ${fmtDate(lastMon)} &ndash; ${fmtDate(lastSun)}.</div>`;
     return;
   }
+  // Classify a day's entry types into a colour. Work beats leave (e.g. half-work + half-holiday => green).
+  const WORK_TYPES=new Set(['work','half_day_work']);
+  const LEAVE_TYPES=new Set(['holiday','half_day_holiday','sick']);
+  function dayClass(nonWorking, types){
+    if(nonWorking) return 'rag-amber';
+    if(!types || types.size===0) return 'rag-red';
+    for(const t of types) if(WORK_TYPES.has(t)) return 'rag-green';
+    let allLeave=true;
+    for(const t of types) if(!LEAVE_TYPES.has(t)){ allLeave=false; break; }
+    return allLeave ? 'rag-purple' : 'rag-green';
+  }
   let html=`<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Week ${fmtDate(lastMon)} &ndash; ${fmtDate(lastSun)} &middot; ${missing.length} of ${required.length} not submitted</div>`;
   html+=`<div class="compliance-row compliance-head">
     <div class="cr-name"></div>
@@ -735,9 +749,9 @@ function renderTsCompliance(emps, lastWeekTs, lastMon, lastSun, weekDays, entryD
     <div class="cr-meta"></div>
   </div>`;
   missing.sort((a,b)=>a.display_name.localeCompare(b.display_name)).forEach(e=>{
-    const dates=entryDatesByEmp[e.id]||new Set();
+    const empDays=entryTypesByEmp[e.id]||{};
     const cells=dayMeta.map(d=>{
-      const cls=d.nonWorking?'rag-amber':(dates.has(d.iso)?'rag-green':'rag-red');
+      const cls=dayClass(d.nonWorking, empDays[d.iso]);
       return `<div class="cr-day"><span class="rag-dot ${cls}" title="${d.label} ${fmtDate(d.iso)}"></span></div>`;
     }).join('');
     html+=`<div class="compliance-row">
