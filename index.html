@@ -115,21 +115,16 @@
     .empty { padding:24px 12px; text-align:center; color:var(--muted); font-size:13px; }
     .loading { padding:24px 12px; text-align:center; color:var(--muted); font-size:13px; }
 
-    .compliance-row { display:flex; align-items:center; gap:12px; padding:6px 0;
-      border-bottom:1px solid var(--border); font-size:13px; }
-    .compliance-row:last-child { border-bottom:none; }
-    .compliance-row .cr-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .compliance-row .cr-meta { color:var(--muted); font-size:12px; white-space:nowrap; }
-    .compliance-days { display:flex; gap:4px; }
-    .compliance-days .cr-day { width:22px; text-align:center; }
-    .compliance-days .cr-day .rag-dot { margin:0; }
-    .compliance-head { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:0.4px; }
-    .compliance-empty { color:var(--green); font-weight:500; }
-    @media (max-width: 720px) {
-      .compliance-row .cr-meta { display:none; }
-      .compliance-days .cr-day { width:18px; }
-      .compliance-days { gap:2px; }
-    }
+    .compliance-empty { color:var(--green); font-weight:500; padding:8px 0; }
+    .scroll-x table.report-compliance { min-width: 720px; }
+    table.report-compliance th.cmp-day, table.report-compliance td.cmp-day {
+      text-align:center; padding:8px 6px; white-space:nowrap; }
+    table.report-compliance th.cmp-day .cmp-date { display:block; font-size:10px;
+      color:var(--muted); font-weight:500; margin-top:2px; letter-spacing:0; text-transform:none; }
+    table.report-compliance td.cmp-day .rag-dot { margin:0; width:14px; height:14px; }
+    table.report-compliance th.cmp-nonworking, table.report-compliance td.cmp-nonworking {
+      background: var(--amber-lt); }
+    table.report-compliance td.cmp-meta { color:var(--muted); font-size:12px; white-space:nowrap; }
 
     .field { margin-bottom: 14px; }
     .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
@@ -742,25 +737,27 @@ function renderTsCompliance(emps, lastWeekTs, lastMon, lastSun, weekDays, entryT
     for(const t of types) if(!LEAVE_TYPES.has(t)){ allLeave=false; break; }
     return allLeave ? 'rag-purple' : 'rag-green';
   }
+  const shortDate=iso=>{const [,m,d]=iso.split('-');return d+'/'+m;};
   let html=`<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Week ${fmtDate(lastMon)} &ndash; ${fmtDate(lastSun)} &middot; ${missing.length} of ${required.length} not submitted</div>`;
-  html+=`<div class="compliance-row compliance-head">
-    <div class="cr-name"></div>
-    <div class="compliance-days">${dayMeta.map(d=>`<div class="cr-day">${d.label}</div>`).join('')}</div>
-    <div class="cr-meta"></div>
-  </div>`;
+  html+=`<table class="report report-compliance"><thead><tr>
+    <th>Name</th>
+    ${dayMeta.map(d=>`<th class="cmp-day${d.nonWorking?' cmp-nonworking':''}">${d.label}<span class="cmp-date">${shortDate(d.iso)}</span></th>`).join('')}
+    <th>Role</th>
+  </tr></thead><tbody>`;
   missing.sort((a,b)=>a.display_name.localeCompare(b.display_name)).forEach(e=>{
     const empDays=entryTypesByEmp[e.id]||{};
     const cells=dayMeta.map(d=>{
       const cls=dayClass(d.nonWorking, empDays[d.iso]);
-      return `<div class="cr-day"><span class="rag-dot ${cls}" title="${d.label} ${fmtDate(d.iso)}"></span></div>`;
+      return `<td class="cmp-day${d.nonWorking?' cmp-nonworking':''}"><span class="rag-dot ${cls}" title="${d.label} ${fmtDate(d.iso)}"></span></td>`;
     }).join('');
-    html+=`<div class="compliance-row">
-      <div class="cr-name">${esc(e.display_name)}</div>
-      <div class="compliance-days">${cells}</div>
-      <div class="cr-meta">${esc(e.role||'')} &middot; ${esc(e.employment_type||'')}</div>
-    </div>`;
+    html+=`<tr>
+      <td>${esc(e.display_name)}</td>
+      ${cells}
+      <td class="cmp-meta">${esc(e.role||'')} &middot; ${esc(e.employment_type||'')}</td>
+    </tr>`;
   });
-  el.innerHTML=html;
+  html+=`</tbody></table>`;
+  el.innerHTML=`<div class="scroll-x">${html}</div>`;
 }
 
 function renderMarginRag(rows){
