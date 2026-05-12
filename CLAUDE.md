@@ -86,6 +86,8 @@ since timesheets are framed Mon–Fri elsewhere in the suite.
 - James Culloty
 - Neil O'Sullivan
 - William Kelly
+- Shannon Lawson
+- Maintenance Test
 Future directors flip `timesheet_required = false`, no code change.
 
 ## Current status
