@@ -113,10 +113,21 @@
     .empty { padding:24px 12px; text-align:center; color:var(--muted); font-size:13px; }
     .loading { padding:24px 12px; text-align:center; color:var(--muted); font-size:13px; }
 
-    .compliance-row { display:flex; justify-content:space-between; padding:6px 0;
+    .compliance-row { display:flex; align-items:center; gap:12px; padding:6px 0;
       border-bottom:1px solid var(--border); font-size:13px; }
     .compliance-row:last-child { border-bottom:none; }
+    .compliance-row .cr-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .compliance-row .cr-meta { color:var(--muted); font-size:12px; white-space:nowrap; }
+    .compliance-days { display:flex; gap:4px; }
+    .compliance-days .cr-day { width:22px; text-align:center; }
+    .compliance-days .cr-day .rag-dot { margin:0; }
+    .compliance-head { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:0.4px; }
     .compliance-empty { color:var(--green); font-weight:500; }
+    @media (max-width: 720px) {
+      .compliance-row .cr-meta { display:none; }
+      .compliance-days .cr-day { width:18px; }
+      .compliance-days { gap:2px; }
+    }
 
     .field { margin-bottom: 14px; }
     .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
@@ -270,7 +281,7 @@ function buildWeeksTueMon(count, today=new Date()){
   return weeks;
 }
 
-// Last week Mon-Fri (the previous calendar week relative to today)
+// Last week Mon-Sun (the previous calendar week relative to today)
 function lastWeekMonFri(today=new Date()){
   const d=new Date(today.getFullYear(),today.getMonth(),today.getDate());
   // Walk back to most recent Monday
@@ -279,7 +290,10 @@ function lastWeekMonFri(today=new Date()){
   d.setDate(d.getDate()-7);
   const mon=new Date(d);
   const fri=new Date(d);fri.setDate(fri.getDate()+4);
-  return {monIso:isoDate(mon),friIso:isoDate(fri)};
+  const sun=new Date(d);sun.setDate(sun.getDate()+6);
+  const days=[];
+  for(let i=0;i<7;i++){const x=new Date(d);x.setDate(d.getDate()+i);days.push(isoDate(x));}
+  return {monIso:isoDate(mon),friIso:isoDate(fri),sunIso:isoDate(sun),days};
 }
 
 function lastNCalendarMonths(n, today=new Date()){
@@ -366,7 +380,7 @@ async function loadDashboard(){
 
   const thisYearMonth=isoDate(today).slice(0,7); // YYYY-MM
 
-  const {monIso:lastMon,friIso:lastFri}=lastWeekMonFri(today);
+  const {monIso:lastMon,friIso:lastFri,sunIso:lastSun,days:weekDays}=lastWeekMonFri(today);
 
   // Big parallel fetch — pull everything we need from each table once.
   const queries=await Promise.all([
@@ -529,7 +543,15 @@ async function loadDashboard(){
   renderActions(actions);
 
   // ── Timesheet compliance ──────────────────────────────────
-  renderTsCompliance(emps, lastWeekTs, lastMon, lastFri);
+  // Build per-employee set of entry-dates for last week (any entry_type counts as "logged")
+  const weekDaySet=new Set(weekDays);
+  const entryDatesByEmp={};
+  time3.forEach(e=>{
+    if(!weekDaySet.has(e.entry_date))return;
+    if(!entryDatesByEmp[e.employee_id])entryDatesByEmp[e.employee_id]=new Set();
+    entryDatesByEmp[e.employee_id].add(e.entry_date);
+  });
+  renderTsCompliance(emps, lastWeekTs, lastMon, lastSun, weekDays, entryDatesByEmp);
 
   // ── Margin RAG ────────────────────────────────────────────
   renderMarginRag(contractRows);
@@ -694,20 +716,34 @@ function renderActions(list){
   document.getElementById('action-list').innerHTML=html;
 }
 
-function renderTsCompliance(emps, lastWeekTs, lastMon, lastFri){
+function renderTsCompliance(emps, lastWeekTs, lastMon, lastSun, weekDays, entryDatesByEmp){
   const el=document.getElementById('ts-compliance');
   const submitted=new Set(lastWeekTs.filter(t=>t.status==='Submitted'||t.status==='Approved').map(t=>t.employee_id));
   const required=emps.filter(e=>e.timesheet_required!==false);
   const missing=required.filter(e=>!submitted.has(e.id));
+  const dayLabels=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  // Non-working = Sat/Sun (i>=5) OR UK bank holiday on that date
+  const dayMeta=weekDays.map((iso,i)=>({iso,label:dayLabels[i],nonWorking:i>=5||UK_BANK_HOLIDAYS.has(iso)}));
   if(missing.length===0){
-    el.innerHTML=`<div class="compliance-empty">All ${required.length} required staff submitted timesheets for ${fmtDate(lastMon)} &ndash; ${fmtDate(lastFri)}.</div>`;
+    el.innerHTML=`<div class="compliance-empty">All ${required.length} required staff submitted timesheets for ${fmtDate(lastMon)} &ndash; ${fmtDate(lastSun)}.</div>`;
     return;
   }
-  let html=`<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Week ${fmtDate(lastMon)} &ndash; ${fmtDate(lastFri)} &middot; ${missing.length} of ${required.length} not submitted</div>`;
+  let html=`<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Week ${fmtDate(lastMon)} &ndash; ${fmtDate(lastSun)} &middot; ${missing.length} of ${required.length} not submitted</div>`;
+  html+=`<div class="compliance-row compliance-head">
+    <div class="cr-name"></div>
+    <div class="compliance-days">${dayMeta.map(d=>`<div class="cr-day">${d.label}</div>`).join('')}</div>
+    <div class="cr-meta"></div>
+  </div>`;
   missing.sort((a,b)=>a.display_name.localeCompare(b.display_name)).forEach(e=>{
+    const dates=entryDatesByEmp[e.id]||new Set();
+    const cells=dayMeta.map(d=>{
+      const cls=d.nonWorking?'rag-amber':(dates.has(d.iso)?'rag-green':'rag-red');
+      return `<div class="cr-day"><span class="rag-dot ${cls}" title="${d.label} ${fmtDate(d.iso)}"></span></div>`;
+    }).join('');
     html+=`<div class="compliance-row">
-      <div>${esc(e.display_name)}</div>
-      <div style="color:var(--muted);font-size:12px">${esc(e.role||'')} &middot; ${esc(e.employment_type||'')}</div>
+      <div class="cr-name">${esc(e.display_name)}</div>
+      <div class="compliance-days">${cells}</div>
+      <div class="cr-meta">${esc(e.role||'')} &middot; ${esc(e.employment_type||'')}</div>
     </div>`;
   });
   el.innerHTML=html;
