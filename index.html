@@ -255,7 +255,7 @@ function isoDate(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2
 function fmtDate(v){return v?new Date(v+'T00:00:00').toLocaleDateString('en-GB'):'';}
 function showScreen(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));const el=document.getElementById(id);if(el)el.classList.add('active');}
 
-// UK bank holidays for the Tue-Mon BH-aware 12-week window (matches CVR app)
+// UK bank holidays for the Tue-Mon BH-aware 4-week window (matches CVR app)
 const UK_BANK_HOLIDAYS = new Set([
   '2025-01-01','2025-04-18','2025-04-21','2025-05-05','2025-05-26','2025-08-25','2025-12-25','2025-12-26',
   '2026-01-01','2026-04-03','2026-04-06','2026-05-04','2026-05-25','2026-08-31','2026-12-25','2026-12-28',
@@ -368,9 +368,9 @@ async function loadDashboard(){
   const last90=new Date(today);last90.setDate(last90.getDate()-90);
   const last90Iso=isoDate(last90);
 
-  const weeks12=buildWeeksTueMon(12);
-  const w12From=weeks12[0].startIso;
-  const w12To=weeks12[weeks12.length-1].endIso;
+  const weeks4=buildWeeksTueMon(4);
+  const w4From=weeks4[0].startIso;
+  const w4To=weeks4[weeks4.length-1].endIso;
 
   const last12moStart=new Date(today.getFullYear(),today.getMonth()-12,1);
   const last12moStartIso=isoDate(last12moStart);
@@ -386,7 +386,7 @@ async function loadDashboard(){
     sb.from('applications').select('project_name, period, status, gross_value, retention_held, net_application, previous_certified, this_certified, payment_amount, payment_date, certified_at'),
     sb.from('variations').select('project_name, value, status'),
     sb.from('time_entries').select('project_name, calculated_hours, entry_type, entry_date, employee_id, employees(rate, rate_type, sick_pay, absent_pay, employment_type, employer_oncost_rate)').gte('entry_date', months3From),
-    sb.from('time_entries').select('project_name, calculated_hours, entry_type, entry_date, employee_id, employees(rate, rate_type, sick_pay, absent_pay, employment_type, employer_oncost_rate)').gte('entry_date', w12From).lte('entry_date', w12To),
+    sb.from('time_entries').select('project_name, calculated_hours, entry_type, entry_date, employee_id, employees(rate, rate_type, sick_pay, absent_pay, employment_type, employer_oncost_rate)').gte('entry_date', w4From).lte('entry_date', w4To),
     sb.from('invoices').select('project_name, vendor_name, invoice_date, net_amount, cost_code, status, po_number'),
     sb.from('po_log').select('project_name, po_number, net_value, cost_code, created_at, status').neq('status','Cancelled'),
     sb.from('cvr_budget').select('project_name, cost_code, forecast_amount'),
@@ -398,7 +398,7 @@ async function loadDashboard(){
     sb.from('maintenance_clients').select('id, client_name, follow_up_priority')
   ]);
 
-  const [projsRes, cvrRes, appsRes, varsRes, time3Res, time12wRes, invsRes, posRes, budgetRes, evRes, actionsRes, empsRes, lastWeekTsRes, queueRes, clientsRes] = queries;
+  const [projsRes, cvrRes, appsRes, varsRes, time3Res, time4wRes, invsRes, posRes, budgetRes, evRes, actionsRes, empsRes, lastWeekTsRes, queueRes, clientsRes] = queries;
 
   const projs=projsRes.data||[];
   const cvrProjs=cvrRes.data||[];
@@ -406,7 +406,7 @@ async function loadDashboard(){
   const apps=appsRes.data||[];
   const vars=varsRes.data||[];
   const time3=time3Res.data||[];
-  const time12w=time12wRes.data||[];
+  const time4w=time4wRes.data||[];
   const invs=invsRes.data||[];
   // Every received invoice counts as cost regardless of approval status.
   // Same philosophy as CVR (James 2026-05-07).
@@ -499,16 +499,16 @@ async function loadDashboard(){
     thisMonthRevenue+=thisMonthCertByProj[p.name]||0;
   });
 
-  // Maintenance 12wk net = earned − (labour + committed in 12wk window)
+  // Maintenance 4wk net = earned − (labour + committed in 4wk window)
   // Committed in window = POs (not cancelled) created in window + orphan invoices in window
-  const evIn12w=evRows.filter(e=>e.entry_date>=w12From&&e.entry_date<=w12To);
-  const maintEarned12w=evIn12w.filter(e=>(e.project_name||'').startsWith('Maintenance - ')).reduce((s,e)=>s+parseFloat(e.amount||0),0);
-  const time12wMaint=time12w.filter(t=>(t.project_name||'').startsWith('Maintenance - '));
-  const maintLabour12w=calcLabourCost(time12wMaint);
-  const posIn12wMaint=pos.filter(p=>(p.project_name||'').startsWith('Maintenance - ')&&p.created_at&&p.created_at.slice(0,10)>=w12From&&p.created_at.slice(0,10)<=w12To).reduce((s,p)=>s+parseFloat(p.net_value||0),0);
-  const orphanInvsIn12wMaint=invs.filter(i=>(i.project_name||'').startsWith('Maintenance - ')&&isOrphan(i)&&i.invoice_date&&i.invoice_date>=w12From&&i.invoice_date<=w12To).reduce((s,i)=>s+parseFloat(i.net_amount||0),0);
-  const maintCommitted12w=posIn12wMaint+orphanInvsIn12wMaint;
-  const maintNet12w=maintEarned12w-(maintLabour12w+maintCommitted12w);
+  const evIn4w=evRows.filter(e=>e.entry_date>=w4From&&e.entry_date<=w4To);
+  const maintEarned4w=evIn4w.filter(e=>(e.project_name||'').startsWith('Maintenance - ')).reduce((s,e)=>s+parseFloat(e.amount||0),0);
+  const time4wMaint=time4w.filter(t=>(t.project_name||'').startsWith('Maintenance - '));
+  const maintLabour4w=calcLabourCost(time4wMaint);
+  const posIn4wMaint=pos.filter(p=>(p.project_name||'').startsWith('Maintenance - ')&&p.created_at&&p.created_at.slice(0,10)>=w4From&&p.created_at.slice(0,10)<=w4To).reduce((s,p)=>s+parseFloat(p.net_value||0),0);
+  const orphanInvsIn4wMaint=invs.filter(i=>(i.project_name||'').startsWith('Maintenance - ')&&isOrphan(i)&&i.invoice_date&&i.invoice_date>=w4From&&i.invoice_date<=w4To).reduce((s,i)=>s+parseFloat(i.net_amount||0),0);
+  const maintCommitted4w=posIn4wMaint+orphanInvsIn4wMaint;
+  const maintNet4w=maintEarned4w-(maintLabour4w+maintCommitted4w);
 
   // Add this-month maintenance revenue to thisMonthRevenue too
   const thisMonthEv=evRows.filter(e=>e.entry_date&&e.entry_date.slice(0,7)===thisYearMonth);
@@ -526,7 +526,7 @@ async function loadDashboard(){
     <div class="kpi ${cashPosition<0?'danger':''}"><div class="kpi-n">${fmt(cashPosition)}</div><div class="kpi-l">Cash position</div><div class="kpi-sub">certified &minus; actual cost</div></div>
     <div class="kpi"><div class="kpi-n">${fmt(thisMonthRevenue)}</div><div class="kpi-l">Revenue this month</div><div class="kpi-sub">contracts + maintenance</div></div>
     <div class="kpi ${avgMarginPct<5?'danger':avgMarginPct<10?'amber':''}"><div class="kpi-n">${fmtPct(avgMarginPct)}</div><div class="kpi-l">Forecast margin</div><div class="kpi-sub">weighted by contract value</div></div>
-    <div class="kpi ${maintNet12w<0?'danger':''}"><div class="kpi-n">${fmt(maintNet12w)}</div><div class="kpi-l">Maintenance 12wk net</div><div class="kpi-sub">earned &minus; (labour + committed)</div></div>
+    <div class="kpi ${maintNet4w<0?'danger':''}"><div class="kpi-n">${fmt(maintNet4w)}</div><div class="kpi-l">Maintenance 4wk net</div><div class="kpi-sub">earned &minus; (labour + committed)</div></div>
   `;
   document.getElementById('kpi-strip').innerHTML=kpiHtml;
 
@@ -555,7 +555,7 @@ async function loadDashboard(){
   renderMarginRag(contractRows);
 
   // ── Maintenance health ────────────────────────────────────
-  renderMaintHealth(clients, evRows, queue, w12From, w12To, last12moStartIso);
+  renderMaintHealth(clients, evRows, queue, w4From, w4To, last12moStartIso);
 }
 
 function renderRevCost(projects, apps, time3ByProj, invs, months3){
@@ -780,12 +780,12 @@ function renderMarginRag(rows){
   el.innerHTML=`<div class="scroll-x">${html}</div>`;
 }
 
-function renderMaintHealth(clients, evRows, queue, w12From, w12To, last12moFrom){
+function renderMaintHealth(clients, evRows, queue, w4From, w4To, last12moFrom){
   const el=document.getElementById('maint-health');
   const activeCount=clients.filter(c=>c.follow_up_priority==='active').length;
   const totalClients=clients.length;
-  const ev12w=evRows.filter(e=>e.entry_date>=w12From&&e.entry_date<=w12To);
-  const rev12w=ev12w.reduce((s,e)=>s+parseFloat(e.amount||0),0);
+  const ev4w=evRows.filter(e=>e.entry_date>=w4From&&e.entry_date<=w4To);
+  const rev4w=ev4w.reduce((s,e)=>s+parseFloat(e.amount||0),0);
   const queueSize=queue.length;
 
   const ev12mo=evRows.filter(e=>e.entry_date>=last12moFrom);
@@ -796,7 +796,7 @@ function renderMaintHealth(clients, evRows, queue, w12From, w12To, last12moFrom)
 
   let html=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
     <div class="kpi"><div class="kpi-n">${activeCount}</div><div class="kpi-l">Active clients</div><div class="kpi-sub">of ${totalClients} total</div></div>
-    <div class="kpi"><div class="kpi-n">${fmt(rev12w)}</div><div class="kpi-l">Revenue (12wk)</div><div class="kpi-sub">${ev12w.length} invoices</div></div>
+    <div class="kpi"><div class="kpi-n">${fmt(rev4w)}</div><div class="kpi-l">Revenue (4wk)</div><div class="kpi-sub">${ev4w.length} invoices</div></div>
     <div class="kpi ${queueSize>0?'amber':''}"><div class="kpi-n">${queueSize}</div><div class="kpi-l">Revenue queue</div><div class="kpi-sub">work needing invoicing</div></div>
   </div>`;
   if(top5.length>0){
